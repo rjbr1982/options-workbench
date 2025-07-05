@@ -11,7 +11,6 @@ import json
 
 # --- הגדרות קבועות ---
 RISK_FREE_RATE = 0.05
-# ### חדש: סיסמת ברירת מחדל אם לא הוגדרה ב-Secrets ###
 DEFAULT_PASSWORD = "12345"
 
 # --- הגדרת פרופילים מובנים ---
@@ -36,34 +35,27 @@ BUILT_IN_PROFILES = {
     }
 }
 
-# ### חדש: פונקציית הגנת סיסמה ###
+# ### פונקציית הגנת סיסמה ###
 def check_password():
     """בודקת אם המשתמש הזין את הסיסמה הנכונה. מחזירה True אם כן."""
-
-    # פונקציה שמופעלת עם הזנת הסיסמה
     def password_entered():
-        # בודקת את הסיסמה שהוזנה מול הסיסמה ב-Secrets או ברירת המחדל
         if st.session_state["password"] == st.secrets.get("PASSWORD", DEFAULT_PASSWORD):
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # מוחקת את הסיסמה מהזיכרון
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
-    # אם הסיסמה כבר אושרה בסשן הנוכחי, החזר True
     if st.session_state.get("password_correct", False):
         return True
 
-    # אם לא, הצג את שדה הקלט לסיסמה
     st.text_input(
         "נא להזין סיסמה כדי לגשת לשולחן העבודה", type="password", on_change=password_entered, key="password"
     )
-    # אם הוזנה סיסמה שגויה, הצג הודעת שגיאה
     if "password_correct" in st.session_state and not st.session_state.password_correct:
         st.error("😕 הסיסמה שהוזנה שגויה. נסה שוב.")
     return False
 
-
-# ### חדש: כל האפליקציה עטופה בפונקציה אחת ###
+# ### כל האפליקציה עטופה בפונקציה אחת ###
 def run_app():
     # --- ניהול פרופילים עם st.session_state ---
     if 'custom_profiles' not in st.session_state:
@@ -78,24 +70,20 @@ def run_app():
         st.session_state.custom_profiles[name] = profile_data
         st.success(f"פרופיל '{name}' נשמר בהצלחה!")
 
-    # --- פונקציות חישוב ודליית נתונים (ללא שינוי) ---
+    # --- פונקציות חישוב ודליית נתונים ---
     def black_scholes(S, K, T, r, sigma, option_type):
-        if T <= 0 or sigma <= 0: return 0, 0, 0, 0, 0
-        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-        d2 = d1 - sigma * np.sqrt(T)
+        if T <= 0 or sigma <= 0: return 0.0
         try:
+            d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
             if option_type == 'call':
-                price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
                 delta = norm.cdf(d1)
             elif option_type == 'put':
-                price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
                 delta = norm.cdf(d1) - 1
-            else: return 0, 0, 0, 0, 0
-        except (ValueError, ZeroDivisionError): return 0, 0, 0, 0, 0
-        gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-        theta = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365 if option_type == 'call' else (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365
-        vega = S * norm.pdf(d1) * np.sqrt(T) / 100
-        return price, delta, gamma, theta, vega
+            else: 
+                delta = 0.0
+        except (ValueError, ZeroDivisionError): 
+            return 0.0
+        return delta
 
     @st.cache_data(ttl=86400)
     def get_tickers_from_wikipedia(index_choice):
@@ -142,9 +130,12 @@ def run_app():
         try:
             ticker = yf.Ticker(ticker_symbol)
             opt = ticker.option_chain(expiration_date)
-            opt.calls['expiration'] = expiration_date
-            opt.puts['expiration'] = expiration_date
-            return opt.calls, opt.puts
+            # Add delta calculation here to optimize
+            calls = opt.calls
+            puts = opt.puts
+            calls['expiration'] = expiration_date
+            puts['expiration'] = expiration_date
+            return calls, puts
         except Exception: return pd.DataFrame(), pd.DataFrame()
 
     def screen_stock(stock_data, criteria):
@@ -168,7 +159,9 @@ def run_app():
                 if pd.isna(bid) or pd.isna(ask) or bid <= 0 or ask <= 0 or pd.isna(volume) or pd.isna(open_interest) or volume < 10 or open_interest < 100: continue
                 implied_volatility = row['impliedVolatility']
                 if pd.isna(implied_volatility) or implied_volatility < criteria["min_iv_threshold"]: continue
-                _, delta, _, _, _ = black_scholes(current_price, row['strike'], dte / 365.0, RISK_FREE_RATE, implied_volatility, option_type)
+                
+                delta = black_scholes(current_price, row['strike'], dte / 365.0, RISK_FREE_RATE, implied_volatility, option_type)
+
                 delta_diff = abs(target_delta - abs(delta))
                 if delta_diff < min_delta_diff:
                     min_delta_diff = delta_diff
@@ -187,11 +180,6 @@ def run_app():
         return ev, ror
 
     # --- ממשק המשתמש של Streamlit ---
-    st.set_page_config(layout="wide", page_title="שולחן העבודה של מנהל התיק - אוטונומי")
-    try:
-        with open('style.css') as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    except FileNotFoundError: st.warning("קובץ style.css לא נמצא.")
-
     st.title("שולחן העבודה של מנהל התיק - אוטונומי")
     st.markdown("הכלי המרכזי שלך לקבלת החלטות, המבוסס על 'ספר החוקים' שלך.")
 
@@ -215,7 +203,6 @@ def run_app():
 
     st.sidebar.subheader("קריטריונים מותאמים אישית")
     current_criteria = {}
-    # לולאה חכמה ליצירת שדות הקלט
     param_labels = {
         "min_stock_price": "מחיר מניה מינימלי", "max_stock_price": "מחיר מניה מקסימלי",
         "max_pe_ratio": "יחס P/E מקסימלי", "min_avg_daily_volume": "ווליום יומי ממוצע מינימלי",
@@ -253,10 +240,9 @@ def run_app():
         INVESTMENT_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "SPY", "QQQ"]
     selected_tickers = st.multiselect("בחר מניות לסריקה:", options=INVESTMENT_UNIVERSE, default=INVESTMENT_UNIVERSE)
 
-    st.info("""...הערות חשובות (כמו קודם)...""")
+    st.info("""...הערות חשובות...""")
 
     if st.button("🚀 נתח ומצא עסקאות"):
-        # ... לוגיקת הניתוח נשארת זהה לחלוטין ...
         if not selected_tickers:
             st.warning("אנא בחר לפחות מניה אחת לסריקה.")
         else:
@@ -343,6 +329,10 @@ def run_app():
                 st.warning("לא נמצאו עסקאות מתאימות. נסה לשנות את קריטריוני הסינון.")
 
 # --- נקודת הכניסה לאפליקציה ---
-# מריצה את האפליקציה רק אם הסיסמה נכונה
+st.set_page_config(layout="wide", page_title="שולחן העבודה של מנהל התיק - אוטונומי")
+try:
+    with open('style.css') as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+except FileNotFoundError: st.warning("קובץ style.css לא נמצא.")
+
 if check_password():
     run_app()
