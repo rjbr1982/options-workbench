@@ -69,26 +69,30 @@ BUILT_IN_PROFILES = {
     },
 }
 
-# --- Login Function ---
+# --- Login Function (Rewritten for Stability) ---
 def check_access_key():
-    if "key_correct" not in st.session_state:
-        st.session_state.key_correct = False
-
-    if st.session_state.key_correct:
+    # This check runs at the top of every script run.
+    # If the user is already logged in, we immediately return True.
+    if st.session_state.get("key_correct", False):
         return True
 
+    # If not logged in, display the login form.
     st.header("🔑 כניסה לשולחן העבודה האישי")
     user_key_input = st.text_input("נא להזין מפתח גישה אישי:", type="password", key="access_key_input")
 
+    # The button click itself will cause the script to rerun from the top.
     if st.button("כניסה"):
         app_secrets = st.secrets.get("app_secrets", {})
         valid_keys = app_secrets.get("VALID_KEYS", [])
         if user_key_input in valid_keys:
+            # Set the state flag for the *next* rerun.
             st.session_state.key_correct = True
             st.session_state.user_key = user_key_input
-            st.experimental_rerun()
+            # No need for an explicit rerun command. It happens automatically.
         else:
             st.error("😕 מפתח הגישה שגוי.")
+    
+    # If we've reached this point, the user is not yet authenticated.
     return False
 
 # --- Core Logic Functions ---
@@ -209,7 +213,6 @@ def run_app():
     if "selected_profile_name" not in st.session_state or st.session_state.selected_profile_name not in profile_names:
         st.session_state.selected_profile_name = profile_names[0]
 
-    # Use the index to manage the selectbox state reliably
     try:
         current_index = profile_names.index(st.session_state.selected_profile_name)
     except ValueError:
@@ -251,8 +254,10 @@ def run_app():
     if st.sidebar.button("💾 שמור פרופיל נוכחי"):
         if new_profile_name:
             if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
+                st.session_state.selected_profile_name = new_profile_name
                 st.sidebar.success(f"פרופיל '{new_profile_name}' נשמר!")
-                # No rerun needed, the state will update on the next natural interaction
+                # Rerun to make the new profile appear in the list immediately
+                st.experimental_rerun() 
         else:
             st.sidebar.warning("יש לתת שם לפרופיל לפני השמירה.")
 
@@ -264,7 +269,7 @@ def run_app():
                 st.sidebar.success(f"פרופיל '{profile_to_delete}' נמחק!")
                 if st.session_state.selected_profile_name == profile_to_delete:
                     st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-                st.experimental_rerun() # Rerun is needed here to force update the list
+                st.experimental_rerun() 
     
     # --- Main Page Content ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
@@ -276,7 +281,6 @@ def run_app():
     st.info("""**הערות חשובות:** הנתונים אינם בזמן אמת. הכלי אינו בודק דוחות רווחים.""")
 
     if st.button("🚀 נתח ומצא עסקאות"):
-        # ... Full analysis logic ...
         if not selected_tickers:
             st.warning("אנא בחר לפחות מניה אחת לסריקה.")
         else:
