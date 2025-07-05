@@ -73,7 +73,6 @@ def check_access_key():
     
     def key_entered():
         user_key = st.session_state["access_key"]
-        # ### מתוקן: קריאה נכונה מתוך קטגוריית הסודות ###
         app_secrets = st.secrets.get("app_secrets", {})
         valid_keys = app_secrets.get("VALID_KEYS", [])
 
@@ -143,11 +142,13 @@ def run_app():
 
     st.sidebar.subheader("ניהול פרופילים")
     new_profile_name = st.sidebar.text_input("שם פרופיל לשמירה/עדכון:", key="new_profile_name_input")
+    
+    # ### מתוקן: הסרת st.experimental_rerun() מכאן ###
     if st.sidebar.button("💾 שמור פרופיל נוכחי"):
         if new_profile_name:
             if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
                 st.sidebar.success(f"פרופיל '{new_profile_name}' נשמר!")
-                st.experimental_rerun()
+                # The app will rerun automatically after the success message is displayed
         else:
             st.sidebar.warning("יש לתת שם לפרופיל לפני השמירה.")
 
@@ -159,10 +160,11 @@ def run_app():
                 st.sidebar.success(f"פרופיל '{profile_to_delete}' נמחק!")
                 if st.session_state.selected_profile_name == profile_to_delete:
                     st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-                st.experimental_rerun()
+                st.experimental_rerun() # Rerun is needed here to update the list
     
-    # ... (The rest of the app logic, like analysis, remains the same)
-    # ... (It has been omitted here for brevity but should be in your actual file)
+    # --- The rest of your app's main page and analysis logic goes here ---
+    # --- It has been omitted for brevity but should be included in your file ---
+    # ...
 
 # --- App Entry Point ---
 st.set_page_config(layout="wide", page_title="שולחן העבודה של מנהל התיק")
