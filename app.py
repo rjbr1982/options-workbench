@@ -38,10 +38,13 @@ def load_profiles_from_db(db, user_key):
 def save_profile_to_db(db, user_key, profile_name, profile_data):
     if db is None: return False
     try:
+        # Convert numpy types to native Python types before saving
+        native_profile_data = {k: (float(v) if isinstance(v, (np.floating, float)) else int(v) if isinstance(v, (np.integer, int)) else v) for k, v in profile_data.items()}
         doc_ref = db.collection("user_profiles").document(user_key)
-        doc_ref.update({f"profiles.{profile_name}": profile_data})
+        doc_ref.update({f"profiles.{profile_name}": native_profile_data})
         return True
-    except Exception:
+    except Exception as e:
+        st.error(f"שגיאה בשמירת פרופיל: {e}")
         return False
 
 def delete_profile_from_db(db, user_key, profile_name):
@@ -50,7 +53,8 @@ def delete_profile_from_db(db, user_key, profile_name):
         doc_ref = db.collection("user_profiles").document(user_key)
         doc_ref.update({f"profiles.{profile_name}": firestore.DELETE_FIELD})
         return True
-    except Exception:
+    except Exception as e:
+        st.error(f"שגיאה במחיקת פרופיל: {e}")
         return False
 
 # --- Built-in Profiles ---
@@ -69,30 +73,23 @@ BUILT_IN_PROFILES = {
     },
 }
 
-# --- Login Function (Rewritten for Stability) ---
+# --- Login Function (Stable Version) ---
 def check_access_key():
-    # This check runs at the top of every script run.
-    # If the user is already logged in, we immediately return True.
     if st.session_state.get("key_correct", False):
         return True
 
-    # If not logged in, display the login form.
     st.header("🔑 כניסה לשולחן העבודה האישי")
     user_key_input = st.text_input("נא להזין מפתח גישה אישי:", type="password", key="access_key_input")
 
-    # The button click itself will cause the script to rerun from the top.
     if st.button("כניסה"):
         app_secrets = st.secrets.get("app_secrets", {})
         valid_keys = app_secrets.get("VALID_KEYS", [])
         if user_key_input in valid_keys:
-            # Set the state flag for the *next* rerun.
             st.session_state.key_correct = True
             st.session_state.user_key = user_key_input
-            # No need for an explicit rerun command. It happens automatically.
+            st.experimental_rerun() # Rerun is necessary and safe here, only on successful login
         else:
             st.error("😕 מפתח הגישה שגוי.")
-    
-    # If we've reached this point, the user is not yet authenticated.
     return False
 
 # --- Core Logic Functions ---
@@ -205,7 +202,7 @@ def run_app():
     st.title("שולחן העבודה של מנהל התיק - אוטונומי")
     st.sidebar.header("הגדרות סריקה וסינון")
     
-    # --- Profile Management UI ---
+    # --- Profile Management UI (Rewritten for Stability) ---
     custom_profiles = load_profiles_from_db(db, user_key)
     all_profiles = {**BUILT_IN_PROFILES, **custom_profiles}
     profile_names = list(all_profiles.keys())
@@ -251,25 +248,27 @@ def run_app():
     st.sidebar.subheader("ניהול פרופילים")
     new_profile_name = st.sidebar.text_input("שם פרופיל לשמירה/עדכון:", key="new_profile_name_input")
     
-    if st.sidebar.button("💾 שמור פרופיל נוכחי"):
-        if new_profile_name:
-            if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
-                st.session_state.selected_profile_name = new_profile_name
-                st.sidebar.success(f"פרופיל '{new_profile_name}' נשמר!")
-                # Rerun to make the new profile appear in the list immediately
-                st.experimental_rerun() 
-        else:
-            st.sidebar.warning("יש לתת שם לפרופיל לפני השמירה.")
+    # --- SAVE/DELETE LOGIC WITHOUT EXPERIMENTAL_RERUN ---
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("💾 שמור"):
+            if new_profile_name:
+                if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
+                    st.session_state.selected_profile_name = new_profile_name
+                    st.sidebar.success(f"'{new_profile_name}' נשמר!")
+            else:
+                st.sidebar.warning("יש לתת שם לפרופיל.")
 
     deletable_profiles = list(custom_profiles.keys())
     if deletable_profiles:
-        profile_to_delete = st.sidebar.selectbox("בחר פרופיל למחיקה:", options=deletable_profiles, key="delete_selector")
-        if st.sidebar.button("🗑️ מחק פרופיל נבחר", type="primary"):
-            if delete_profile_from_db(db, user_key, profile_to_delete):
-                st.sidebar.success(f"פרופיל '{profile_to_delete}' נמחק!")
-                if st.session_state.selected_profile_name == profile_to_delete:
+        with col2:
+            if st.button("🗑️ מחק"):
+                profile_to_delete = st.session_state.profile_selector
+                if profile_to_delete in BUILT_IN_PROFILES:
+                    st.sidebar.warning("לא ניתן למחוק פרופיל מובנה.")
+                elif delete_profile_from_db(db, user_key, profile_to_delete):
+                    st.sidebar.success(f"'{profile_to_delete}' נמחק!")
                     st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-                st.experimental_rerun() 
     
     # --- Main Page Content ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
