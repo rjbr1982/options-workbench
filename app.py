@@ -68,7 +68,7 @@ def run_app():
 
     def save_custom_profile(name, profile_data):
         st.session_state.custom_profiles[name] = profile_data
-        st.success(f"פרופיל '{name}' נשמר בהצלחה!")
+        st.session_state.selected_profile_name = name
 
     # --- פונקציות חישוב ודליית נתונים ---
     def black_scholes(S, K, T, r, sigma, option_type):
@@ -130,7 +130,6 @@ def run_app():
         try:
             ticker = yf.Ticker(ticker_symbol)
             opt = ticker.option_chain(expiration_date)
-            # Add delta calculation here to optimize
             calls = opt.calls
             puts = opt.puts
             calls['expiration'] = expiration_date
@@ -193,11 +192,9 @@ def run_app():
 
     profile_name = st.sidebar.selectbox(
         "בחר פרופיל סינון:", options=list(all_profiles.keys()),
-        key='profile_selector', on_change=on_profile_change
+        key='profile_selector', on_change=on_profile_change,
+        index=list(all_profiles.keys()).index(st.session_state.selected_profile_name)
     )
-
-    if st.session_state.selected_profile_name not in all_profiles:
-        st.session_state.selected_profile_name = list(all_profiles.keys())[0]
 
     selected_profile = all_profiles[st.session_state.selected_profile_name]
 
@@ -222,14 +219,15 @@ def run_app():
             current_criteria[key] = st.sidebar.slider(f"{label}:", 0.0, 1.5 if "iv" in key else 0.5, float(value), 0.01, "%.2f", key=f"criteria_{key}")
 
     st.sidebar.subheader("שמירת פרופיל חדש")
-    new_profile_name = st.sidebar.text_input("שם לפרופיל החדש:")
+    new_profile_name = st.sidebar.text_input("שם לפרופיל החדש:", key="new_profile_name_input")
+    
     if st.sidebar.button("💾 שמור פרופיל נוכחי"):
         if new_profile_name:
             if new_profile_name in BUILT_IN_PROFILES:
                 st.sidebar.error("לא ניתן לדרוס פרופיל מובנה.")
             else:
                 save_custom_profile(new_profile_name, current_criteria)
-                st.experimental_rerun()
+                st.sidebar.success(f"פרופיל '{new_profile_name}' נשמר ונבחר!")
         else:
             st.sidebar.warning("יש לתת שם לפרופיל לפני השמירה.")
 
@@ -240,7 +238,13 @@ def run_app():
         INVESTMENT_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "SPY", "QQQ"]
     selected_tickers = st.multiselect("בחר מניות לסריקה:", options=INVESTMENT_UNIVERSE, default=INVESTMENT_UNIVERSE)
 
-    st.info("""...הערות חשובות...""")
+    st.info("""
+        **הערות חשובות:**
+        * **זמן ריצה:** סריקת מניות רבות עלולה לקחת זמן רב מאוד. התחל עם רשימה קטנה.
+        * **נתונים:** הנתונים מ-Yahoo Finance ואינם בזמן אמת. הכלי מתאים לניתוח לאחר שעות המסחר.
+        * **IV Rank:** הכלי משתמש ב-`impliedVolatility` כאינדיקציה לוולטיליות, לא IV Rank אמיתי.
+        * **דוחות רווחים:** הכלי אינו בודק תאריכי דוחות. יש לבצע בדיקה זו ידנית.
+    """)
 
     if st.button("🚀 נתח ומצא עסקאות"):
         if not selected_tickers:
