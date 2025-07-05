@@ -38,7 +38,6 @@ def load_profiles_from_db(db, user_key):
 def save_profile_to_db(db, user_key, profile_name, profile_data):
     if db is None: return False
     try:
-        # Convert numpy types to native Python types before saving
         native_profile_data = {k: (float(v) if isinstance(v, (np.floating, float)) else int(v) if isinstance(v, (np.integer, int)) else v) for k, v in profile_data.items()}
         doc_ref = db.collection("user_profiles").document(user_key)
         doc_ref.update({f"profiles.{profile_name}": native_profile_data})
@@ -87,7 +86,7 @@ def check_access_key():
         if user_key_input in valid_keys:
             st.session_state.key_correct = True
             st.session_state.user_key = user_key_input
-            st.experimental_rerun() # Rerun is necessary and safe here, only on successful login
+            st.rerun() # Use the modern, stable rerun command
         else:
             st.error("😕 מפתח הגישה שגוי.")
     return False
@@ -222,7 +221,11 @@ def run_app():
         index=current_index,
         key="profile_selector"
     )
-    st.session_state.selected_profile_name = selected_profile_name
+    # This is the key to stability: only update the session state if the user actually changed the selection
+    if selected_profile_name != st.session_state.selected_profile_name:
+        st.session_state.selected_profile_name = selected_profile_name
+        st.rerun() # A safe rerun to load the new profile's values into the widgets
+
     selected_profile = all_profiles[selected_profile_name]
 
     st.sidebar.subheader("קריטריונים מותאמים אישית")
@@ -248,7 +251,6 @@ def run_app():
     st.sidebar.subheader("ניהול פרופילים")
     new_profile_name = st.sidebar.text_input("שם פרופיל לשמירה/עדכון:", key="new_profile_name_input")
     
-    # --- SAVE/DELETE LOGIC WITHOUT EXPERIMENTAL_RERUN ---
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.button("💾 שמור"):
@@ -256,19 +258,22 @@ def run_app():
                 if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
                     st.session_state.selected_profile_name = new_profile_name
                     st.sidebar.success(f"'{new_profile_name}' נשמר!")
+                    st.rerun() # Rerun to update the profile list immediately
             else:
                 st.sidebar.warning("יש לתת שם לפרופיל.")
 
     deletable_profiles = list(custom_profiles.keys())
     if deletable_profiles:
         with col2:
+            # Use the currently selected profile in the dropdown as the one to delete
+            profile_to_delete = selected_profile_name
             if st.button("🗑️ מחק"):
-                profile_to_delete = st.session_state.profile_selector
                 if profile_to_delete in BUILT_IN_PROFILES:
                     st.sidebar.warning("לא ניתן למחוק פרופיל מובנה.")
                 elif delete_profile_from_db(db, user_key, profile_to_delete):
                     st.sidebar.success(f"'{profile_to_delete}' נמחק!")
                     st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
+                    st.rerun() # Rerun to refresh the list and selection
     
     # --- Main Page Content ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
