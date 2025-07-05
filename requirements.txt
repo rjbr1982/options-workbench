@@ -5,3 +5,5 @@ numpy
 scipy
 requests
 beautifulsoup4
+google-cloud-firestore
+google-auth-oauthlib
