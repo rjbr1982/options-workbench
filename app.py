@@ -244,71 +244,9 @@ def calculate_trade_metrics(strategy_type, credit, spread_width, pop):
 # --- ממשק המשתמש של Streamlit ---
 st.set_page_config(layout="wide", page_title="שולחן העבודה של מנהל התיק - אוטונומי")
 
-st.markdown("""
-    <style>
-        .stApp {
-            background-color: #111827;
-            color: #E5E7EB;
-            font-family: 'Heebo', sans-serif;
-        }
-        .stButton > button {
-            background-color: #3B82F6;
-            color: white;
-            font-weight: bold;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.375rem;
-            transition: background-color 0.3s;
-        }
-        .stButton > button:hover {
-            background-color: #2563EB;
-        }
-        .stTextInput > div > div > input {
-            background-color: #374151;
-            color: #F9FAFB;
-            border: 1px solid #4B5563;
-            border-radius: 0.375rem;
-            padding: 0.5rem;
-        }
-        .stSelectbox > div > div {
-            background-color: #374151;
-            color: #F9FAFB;
-            border: 1px solid #4B5563;
-            border-radius: 0.375rem;
-        }
-        .stTable, .stDataFrame {
-            background-color: #1F2937;
-            color: #E5E7EB;
-            border: 1px solid #374151;
-            border-radius: 0.5rem;
-        }
-        .css-1r6slb0 { /* Header for dataframe */
-            background-color: #374151;
-            color: #E5E7EB;
-        }
-        .css-1r6slb0 th { /* Specific header cells */
-            background-color: #374151;
-            color: #E5E7EB;
-        }
-        .css-1dbjc4n.e1tzin5v1 { /* Main content area */
-            padding-top: 1rem;
-            padding-bottom: 1rem;
-        }
-        h1, h2, h3, h4, h5, h6 {
-            color: #FFFFFF;
-        }
-        .reportview-container .main .block-container{
-            padding-top: 2rem;
-            padding-right: 2rem;
-            padding-left: 2rem;
-            padding-bottom: 2rem;
-        }
-        .stAlert {
-            background-color: #1F2937;
-            color: #E5E7EB;
-            border-color: #374151;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# טעינת קובץ ה-CSS
+with open('style.css') as f:
+    st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
 st.title("שולחן העבודה של מנהל התיק - אוטונומי")
 st.markdown("הכלי המרכזי שלך לקבלת החלטות, המבוסס על 'ספר החוקים' שלך.")
@@ -454,4 +392,41 @@ if st.button("נתח ומצא את העסקאות הטובות ביותר"):
                                 'IV גלום קול': f"{best_call_neutral['implied_volatility']:.2%}",
                                 'פרמיה כוללת (מוערך)': f"${total_credit:.2f}",
                                 'תוחלת רווח (EV)': f"${ev_ic:.2f}",
-                                'תשואה על
+                                'תשואה על סיכון (ROR)': f"{ror_ic:.1f}%" if ror_ic != float('inf') else '∞',
+                                'הסתברות לרווח (POP)': f"{pop_ic:.1%}",
+                                'הוראת GTC (קנה חזרה)': f"${(total_credit / 2):.2f}",
+                                'תאריך יעד לניהול': (exp_dt - timedelta(days=21)).strftime('%Y-%m-%d')
+                            })
+                            suitable_options_found = True
+            
+            if not suitable_options_found and is_suitable_stock:
+                st.write(f"**{ticker_symbol}:** 🤷 לא נמצאו עסקאות אופציות מתאימות לפי הקריטריונים.")
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if all_suitable_deals:
+            deals_df = pd.DataFrame(all_suitable_deals)
+            
+            # חישוב ציון לדירוג
+            deals_df['EV_numeric'] = deals_df['תוחלת רווח (EV)'].str.replace('$', '').astype(float)
+            deals_df['ROR_numeric'] = deals_df['תשואה על סיכון (ROR)'].str.replace('%', '').replace('∞', np.inf).astype(float)
+            deals_df['POP_numeric'] = deals_df['הסתברות לרווח (POP)'].str.replace('%', '').astype(float)
+
+            max_ev = deals_df['EV_numeric'].max()
+            max_ror = deals_df['ROR_numeric'].max()
+            max_pop = deals_df['POP_numeric'].max()
+
+            deals_df['ציון'] = (
+                (deals_df['EV_numeric'] / max_ev) * 0.45 +
+                (deals_df['POP_numeric'] / max_pop) * 0.45 +
+                (deals_df['ROR_numeric'] / max_ror) * 0.10
+            )
+            
+            deals_df = deals_df.sort_values(by='ציון', ascending=False)
+            
+            # הסתרת עמודות העזר המספריות
+            deals_df = deals_df.drop(columns=['EV_numeric', 'ROR_numeric', 'POP_numeric'])
+
+            st.dataframe(deals_df, use_container_width=True)
+            st.succe
