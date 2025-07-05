@@ -218,27 +218,26 @@ def run_app():
     st.title("שולחן העבודה של מנהל התיק - אוטונומי")
     st.sidebar.header("הגדרות סריקה וסינון")
 
-    # --- NEW: Robust Profile Management Logic ---
+    # --- CORRECTED: Robust Profile Management Logic ---
     custom_profiles = load_profiles_from_db(db, user_key)
     all_profiles = {**BUILT_IN_PROFILES, **custom_profiles}
     profile_names = list(all_profiles.keys())
     
-    # Define the callback function that updates the session state for all criteria
     def on_profile_change():
         profile_name = st.session_state.profile_selector
         profile_data = all_profiles.get(profile_name)
         if profile_data:
             for key, value in profile_data.items():
                 widget_key = f"criteria_{key}"
-                # Ensure data types match the widget's expectation
                 if "price" in key or "width" in key or "delta" in key or "iv" in key:
                     st.session_state[widget_key] = float(value)
-                else: # volume, pe_ratio, dte
+                else: 
                     st.session_state[widget_key] = int(value)
 
-    # One-time initialization of criteria widgets state on first run
     if 'criteria_initialized' not in st.session_state:
-        default_profile_data = all_profiles[profile_names[0]]
+        default_profile_name = profile_names[0]
+        st.session_state.profile_selector = default_profile_name
+        default_profile_data = all_profiles[default_profile_name]
         for key, value in default_profile_data.items():
             widget_key = f"criteria_{key}"
             if "price" in key or "width" in key or "delta" in key or "iv" in key:
@@ -246,24 +245,18 @@ def run_app():
             else:
                 st.session_state[widget_key] = int(value)
         st.session_state['criteria_initialized'] = True
-        # Set the initial selected profile in the selector's state
-        st.session_state.profile_selector = profile_names[0]
 
 
-    # The selectbox now uses the on_change callback to trigger state updates
     st.sidebar.selectbox(
         "בחר פרופיל סינון:",
         options=profile_names,
-        key="profile_selector", # This key holds the name of the selected profile
+        key="profile_selector",
         on_change=on_profile_change
     )
     
-    # --- Create sidebar widgets. They automatically read their values from session_state via their keys ---
     st.sidebar.subheader("קריטריונים מותאמים אישית")
     current_criteria = {}
     
-    # We define the widgets based on a template (the default profile keys)
-    # The actual values are controlled by st.session_state
     template_keys = BUILT_IN_PROFILES["ברירת מחדל (שמרני)"].keys()
     param_labels = {
         "min_stock_price": "מחיר מניה מינימלי", "max_stock_price": "מחיר מניה מקסימלי",
@@ -278,15 +271,23 @@ def run_app():
         widget_key = f"criteria_{key}"
         
         if "price" in key or "width" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label} ($):", min_value=0.0, step=0.5, key=widget_key)
+            current_criteria[key] = st.sidebar.number_input(label=f"{label} ($):", min_value=0.0, step=0.5, key=widget_key)
         elif "volume" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=0, step=100_000, format="%d", key=widget_key)
+            current_criteria[key] = st.sidebar.number_input(label=f"{label}:", min_value=0, step=100_000, format="%d", key=widget_key)
         elif "pe_ratio" in key or "dte" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=1, step=1, key=widget_key)
+            current_criteria[key] = st.sidebar.number_input(label=f"{label}:", min_value=1, step=1, key=widget_key)
         elif "delta" in key or "iv" in key:
-            current_criteria[key] = st.sidebar.slider(f"{label}:", 0.0, 1.5 if "iv" in key else 0.5, 0.01, "%.2f", key=widget_key)
+            # THIS IS THE FIX: Using keyword arguments and NOT passing 'value'
+            current_criteria[key] = st.sidebar.slider(
+                label=f"{label}:", 
+                min_value=0.0, 
+                max_value=1.5 if "iv" in key else 0.5, 
+                step=0.01, 
+                format="%.2f", 
+                key=widget_key
+            )
 
-    # --- Profile Save/Delete UI (remains mostly the same) ---
+    # --- Profile Save/Delete UI ---
     st.sidebar.subheader("ניהול פרופילים")
     new_profile_name = st.sidebar.text_input("שם פרופיל לשמירה/עדכון:", key="new_profile_name_input")
     
@@ -296,7 +297,6 @@ def run_app():
             if new_profile_name:
                 if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
                     st.sidebar.success(f"'{new_profile_name}' נשמר!")
-                    # Update selector to the new profile and rerun
                     st.session_state.profile_selector = new_profile_name
                     st.rerun() 
             else:
@@ -311,11 +311,10 @@ def run_app():
                     st.sidebar.warning("לא ניתן למחוק פרופיל מובנה.")
                 elif delete_profile_from_db(db, user_key, profile_to_delete):
                     st.sidebar.success(f"'{profile_to_delete}' נמחק!")
-                    # Reset selector to default and rerun
                     st.session_state.profile_selector = "ברירת מחדל (שמרני)"
                     st.rerun() 
     
-    # --- Main Page Content (No changes needed here) ---
+    # --- Main Page Content ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
     INVESTMENT_UNIVERSE = get_tickers_from_wikipedia(index_to_scan)
     if not INVESTMENT_UNIVERSE:
@@ -351,7 +350,6 @@ def run_app():
                     calls_df, puts_df = get_option_chain(ticker_symbol, expiration_date)
                     if puts_df.empty or calls_df.empty: continue
                     
-                    # Bull Put Spread Logic
                     if sma50 and current_price > sma50:
                         sold_put = find_best_option_strike(puts_df, current_price, 'put', current_criteria["target_delta_directional"], current_criteria)
                         if sold_put:
@@ -365,7 +363,6 @@ def run_app():
                                     ev, ror = calculate_trade_metrics(credit, spread_width, pop)
                                     if ev > 0: all_suitable_deals.append({'מניה': ticker_symbol, 'אסטרטגיה': 'Bull Put', 'מחיר מניה': f"${current_price:.2f}", 'SMA50': f"${sma50:.2f}", 'ת. פקיעה': expiration_date, 'DTE': dte, 'סטרייקים': f"${bought_strike:.2f} / ${sold_put['strike']:.2f}", 'דלתא (נמכר)': f"{sold_put['delta']:.2f}", 'IV (נמכר)': f"{sold_put['impliedVolatility']:.2%}", 'פרמיה': f"${credit:.2f}", 'תוחלת רווח (EV)': f"${ev:.2f}", 'תשואה על סיכון (ROR)': f"{ror:.1f}%" if ror != float('inf') else '∞', 'הסתברות לרווח (POP)': f"{pop:.1%}"})
                     
-                    # Bear Call Spread Logic
                     if sma50 and current_price < sma50:
                         sold_call = find_best_option_strike(calls_df, current_price, 'call', current_criteria["target_delta_directional"], current_criteria)
                         if sold_call:
@@ -383,7 +380,6 @@ def run_app():
             status_text.empty()
             if all_suitable_deals:
                 deals_df = pd.DataFrame(all_suitable_deals)
-                # Scoring Logic
                 deals_df['EV_numeric'] = pd.to_numeric(deals_df['תוחלת רווח (EV)'].str.replace('$', ''), errors='coerce').fillna(0)
                 deals_df['ROR_numeric'] = pd.to_numeric(deals_df['תשואה על סיכון (ROR)'].str.replace('%', '').replace('∞', 'inf'), errors='coerce').fillna(0)
                 deals_df['POP_numeric'] = pd.to_numeric(deals_df['הסתברות לרווח (POP)'].str.replace('%', ''), errors='coerce').fillna(0)
@@ -408,4 +404,3 @@ except FileNotFoundError: pass
 
 if check_access_key():
     run_app()
-
