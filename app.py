@@ -10,7 +10,8 @@ import json
 from google.cloud import firestore
 from google.oauth2 import service_account
 
-# --- Firestore Initialization ---
+# --- Firestore Initialization & Profile Management ---
+@st.cache_resource
 def init_firestore_connection():
     try:
         creds_json = st.secrets["gcp_service_account"]
@@ -18,11 +19,9 @@ def init_firestore_connection():
         db = firestore.Client(credentials=creds)
         return db
     except Exception as e:
-        st.error(f"שגיאה בהתחברות למסד הנתונים: {e}")
-        st.warning("וודא שהגדרת את סודות האפליקציה (gcp_service_account) כראוי ב-Streamlit Cloud.")
+        st.error(f"שגיאה קריטית בהתחברות למסד הנתונים. ודא שהגדרות הסודות נכונות. שגיאה: {e}")
         return None
 
-# --- Profile Management Functions (Firestore) ---
 def load_profiles_from_db(db, user_key):
     if db is None: return {}
     try:
@@ -33,8 +32,7 @@ def load_profiles_from_db(db, user_key):
         else:
             doc_ref.set({"profiles": {}})
             return {}
-    except Exception as e:
-        st.error(f"שגיאה בטעינת פרופילים: {e}")
+    except Exception:
         return {}
 
 def save_profile_to_db(db, user_key, profile_name, profile_data):
@@ -43,8 +41,7 @@ def save_profile_to_db(db, user_key, profile_name, profile_data):
         doc_ref = db.collection("user_profiles").document(user_key)
         doc_ref.update({f"profiles.{profile_name}": profile_data})
         return True
-    except Exception as e:
-        st.error(f"שגיאה בשמירת פרופיל: {e}")
+    except Exception:
         return False
 
 def delete_profile_from_db(db, user_key, profile_name):
@@ -53,20 +50,19 @@ def delete_profile_from_db(db, user_key, profile_name):
         doc_ref = db.collection("user_profiles").document(user_key)
         doc_ref.update({f"profiles.{profile_name}": firestore.DELETE_FIELD})
         return True
-    except Exception as e:
-        st.error(f"שגיאה במחיקת פרופיל: {e}")
+    except Exception:
         return False
 
 # --- Built-in Profiles ---
 BUILT_IN_PROFILES = {
     "ברירת מחדל (שמרני)": {
-        "min_stock_price": 20, "max_stock_price": 70, "max_pe_ratio": 40,
+        "min_stock_price": 20.0, "max_stock_price": 70.0, "max_pe_ratio": 40.0,
         "min_avg_daily_volume": 2000000, "min_iv_threshold": 0.30,
         "min_dte": 30, "max_dte": 60, "target_delta_directional": 0.30,
         "target_delta_neutral": 0.15, "spread_width": 5.0
     },
-    "טווח רחב (למציאת יותר מניות)": {
-        "min_stock_price": 10, "max_stock_price": 500, "max_pe_ratio": 60,
+     "טווח רחב (למציאת יותר מניות)": {
+        "min_stock_price": 10.0, "max_stock_price": 500.0, "max_pe_ratio": 60.0,
         "min_avg_daily_volume": 1000000, "min_iv_threshold": 0.20,
         "min_dte": 20, "max_dte": 90, "target_delta_directional": 0.35,
         "target_delta_neutral": 0.20, "spread_width": 10.0
@@ -75,28 +71,24 @@ BUILT_IN_PROFILES = {
 
 # --- Login Function ---
 def check_access_key():
-    st.header("🔑 כניסה לשולחן העבודה האישי")
-    
-    def key_entered():
-        user_key = st.session_state["access_key"]
-        app_secrets = st.secrets.get("app_secrets", {})
-        valid_keys = app_secrets.get("VALID_KEYS", [])
+    if "key_correct" not in st.session_state:
+        st.session_state.key_correct = False
 
-        if user_key in valid_keys:
-            st.session_state["key_correct"] = True
-            st.session_state["user_key"] = user_key
-            del st.session_state["access_key"]
-        else:
-            st.session_state["key_correct"] = False
-
-    if st.session_state.get("key_correct", False):
+    if st.session_state.key_correct:
         return True
 
-    st.text_input(
-        "נא להזין מפתח גישה אישי:", type="password", on_change=key_entered, key="access_key"
-    )
-    if "key_correct" in st.session_state and not st.session_state.key_correct:
-        st.error("😕 מפתח הגישה שגוי.")
+    st.header("🔑 כניסה לשולחן העבודה האישי")
+    user_key_input = st.text_input("נא להזין מפתח גישה אישי:", type="password", key="access_key_input")
+
+    if st.button("כניסה"):
+        app_secrets = st.secrets.get("app_secrets", {})
+        valid_keys = app_secrets.get("VALID_KEYS", [])
+        if user_key_input in valid_keys:
+            st.session_state.key_correct = True
+            st.session_state.user_key = user_key_input
+            st.experimental_rerun()
+        else:
+            st.error("😕 מפתח הגישה שגוי.")
     return False
 
 # --- Core Logic Functions ---
@@ -114,7 +106,6 @@ def black_scholes(S, K, T, r, sigma, option_type):
 
 @st.cache_data(ttl=86400)
 def get_tickers_from_wikipedia(index_choice):
-    # This function remains unchanged
     tickers = set()
     urls = {"S&P 500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "NASDAQ 100": "https://en.wikipedia.org/wiki/Nasdaq-100"}
     indices_to_fetch = ["S&P 500", "NASDAQ 100"] if index_choice == "שניהם" else [index_choice]
@@ -136,7 +127,6 @@ def get_tickers_from_wikipedia(index_choice):
 
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_symbol):
-    # This function remains unchanged
     try:
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
@@ -154,7 +144,6 @@ def get_stock_data(ticker_symbol):
 
 @st.cache_data(ttl=3600)
 def get_option_chain(ticker_symbol, expiration_date):
-    # This function remains unchanged
     try:
         ticker = yf.Ticker(ticker_symbol)
         opt = ticker.option_chain(expiration_date)
@@ -163,7 +152,6 @@ def get_option_chain(ticker_symbol, expiration_date):
     except Exception: return pd.DataFrame(), pd.DataFrame()
 
 def screen_stock(stock_data, criteria):
-    # This function remains unchanged
     if not stock_data: return False
     price, pe, volume = stock_data['current_price'], stock_data['pe_ratio'], stock_data['avg_volume']
     if price is None or volume is None: return False
@@ -173,7 +161,6 @@ def screen_stock(stock_data, criteria):
     return True
 
 def find_best_option_strike(options_df, current_price, option_type, target_delta, criteria):
-    # This function remains unchanged
     best_strike_data, min_delta_diff = None, float('inf')
     today = datetime.now().date()
     for _, row in options_df.iterrows():
@@ -194,7 +181,6 @@ def find_best_option_strike(options_df, current_price, option_type, target_delta
     return best_strike_data
 
 def calculate_trade_metrics(credit, spread_width, pop):
-    # This function remains unchanged
     if credit <= 0: return -float('inf'), -float('inf')
     max_profit = credit * 100
     max_loss = (spread_width - credit) * 100
@@ -203,48 +189,40 @@ def calculate_trade_metrics(credit, spread_width, pop):
     ror = (max_profit / max_loss) * 100
     return ev, ror
 
-
 # --- Main App Function ---
 def run_app():
     db = init_firestore_connection()
     user_key = st.session_state.get("user_key")
 
     if db is None or user_key is None:
+        st.error("לא ניתן להתחבר למסד הנתונים. בדוק את הגדרות האפליקציה.")
         st.stop()
 
     st.title("שולחן העבודה של מנהל התיק - אוטונומי")
     st.sidebar.header("הגדרות סריקה וסינון")
     
-    # Load profiles
+    # --- Profile Management UI ---
     custom_profiles = load_profiles_from_db(db, user_key)
     all_profiles = {**BUILT_IN_PROFILES, **custom_profiles}
-
-    # Initialize session state for selected profile if it doesn't exist or is invalid
-    if 'selected_profile_name' not in st.session_state or st.session_state.selected_profile_name not in all_profiles:
-        st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-
-    # ### מתוקן: לוגיקה חדשה ויציבה לבחירת פרופיל ###
-    # Get the current index of the selected profile
     profile_names = list(all_profiles.keys())
+    
+    if "selected_profile_name" not in st.session_state or st.session_state.selected_profile_name not in profile_names:
+        st.session_state.selected_profile_name = profile_names[0]
+
+    # Use the index to manage the selectbox state reliably
     try:
         current_index = profile_names.index(st.session_state.selected_profile_name)
     except ValueError:
-        current_index = 0 # Default to the first profile if not found
-    
-    # Display the selectbox. Streamlit handles the state of the widget itself.
+        current_index = 0
+        st.session_state.selected_profile_name = profile_names[current_index]
+
     selected_profile_name = st.sidebar.selectbox(
         "בחר פרופיל סינון:",
         options=profile_names,
         index=current_index,
-        key="profile_selector" # Assign a key to access its state
+        key="profile_selector"
     )
-    
-    # Update our session state only if the widget's state has changed.
-    # This avoids the problematic on_change callback.
-    if selected_profile_name != st.session_state.selected_profile_name:
-        st.session_state.selected_profile_name = selected_profile_name
-        st.experimental_rerun() # Rerun to apply the new profile settings correctly
-
+    st.session_state.selected_profile_name = selected_profile_name
     selected_profile = all_profiles[selected_profile_name]
 
     st.sidebar.subheader("קריטריונים מותאמים אישית")
@@ -273,32 +251,32 @@ def run_app():
     if st.sidebar.button("💾 שמור פרופיל נוכחי"):
         if new_profile_name:
             if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
-                st.session_state.selected_profile_name = new_profile_name
                 st.sidebar.success(f"פרופיל '{new_profile_name}' נשמר!")
-                st.experimental_rerun()
+                # No rerun needed, the state will update on the next natural interaction
         else:
             st.sidebar.warning("יש לתת שם לפרופיל לפני השמירה.")
 
     deletable_profiles = list(custom_profiles.keys())
     if deletable_profiles:
-        profile_to_delete = st.sidebar.selectbox("בחר פרופיל למחיקה:", options=deletable_profiles)
+        profile_to_delete = st.sidebar.selectbox("בחר פרופיל למחיקה:", options=deletable_profiles, key="delete_selector")
         if st.sidebar.button("🗑️ מחק פרופיל נבחר", type="primary"):
             if delete_profile_from_db(db, user_key, profile_to_delete):
                 st.sidebar.success(f"פרופיל '{profile_to_delete}' נמחק!")
                 if st.session_state.selected_profile_name == profile_to_delete:
                     st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-                st.experimental_rerun()
+                st.experimental_rerun() # Rerun is needed here to force update the list
     
+    # --- Main Page Content ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
     INVESTMENT_UNIVERSE = get_tickers_from_wikipedia(index_to_scan)
     if not INVESTMENT_UNIVERSE:
         st.warning("גירוד המניות נכשל. משתמש ברשימת דוגמה.")
         INVESTMENT_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "SPY", "QQQ"]
     selected_tickers = st.multiselect("בחר מניות לסריקה:", options=INVESTMENT_UNIVERSE, default=INVESTMENT_UNIVERSE)
-
     st.info("""**הערות חשובות:** הנתונים אינם בזמן אמת. הכלי אינו בודק דוחות רווחים.""")
 
     if st.button("🚀 נתח ומצא עסקאות"):
+        # ... Full analysis logic ...
         if not selected_tickers:
             st.warning("אנא בחר לפחות מניה אחת לסריקה.")
         else:
@@ -325,7 +303,6 @@ def run_app():
                     calls_df, puts_df = get_option_chain(ticker_symbol, expiration_date)
                     if puts_df.empty or calls_df.empty: continue
                     
-                    # Bull Put Spread
                     if sma50 and current_price > sma50:
                         sold_put = find_best_option_strike(puts_df, current_price, 'put', current_criteria["target_delta_directional"], current_criteria)
                         if sold_put:
@@ -339,7 +316,6 @@ def run_app():
                                     ev, ror = calculate_trade_metrics(credit, spread_width, pop)
                                     if ev > 0: all_suitable_deals.append({'מניה': ticker_symbol, 'אסטרטגיה': 'Bull Put', 'מחיר מניה': f"${current_price:.2f}", 'SMA50': f"${sma50:.2f}", 'ת. פקיעה': expiration_date, 'DTE': dte, 'סטרייקים': f"${bought_strike:.2f} / ${sold_put['strike']:.2f}", 'דלתא (נמכר)': f"{sold_put['delta']:.2f}", 'IV (נמכר)': f"{sold_put['impliedVolatility']:.2%}", 'פרמיה': f"${credit:.2f}", 'תוחלת רווח (EV)': f"${ev:.2f}", 'תשואה על סיכון (ROR)': f"{ror:.1f}%" if ror != float('inf') else '∞', 'הסתברות לרווח (POP)': f"{pop:.1%}"})
                     
-                    # Bear Call Spread
                     if sma50 and current_price < sma50:
                         sold_call = find_best_option_strike(calls_df, current_price, 'call', current_criteria["target_delta_directional"], current_criteria)
                         if sold_call:
