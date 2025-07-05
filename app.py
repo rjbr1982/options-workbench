@@ -13,6 +13,7 @@ from google.oauth2 import service_account
 # --- Firestore Initialization & Profile Management ---
 @st.cache_resource
 def init_firestore_connection():
+    """Initializes a connection to the Firestore database using Streamlit secrets."""
     try:
         creds_json = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(creds_json)
@@ -23,6 +24,7 @@ def init_firestore_connection():
         return None
 
 def load_profiles_from_db(db, user_key):
+    """Loads all custom profiles for a given user from Firestore."""
     if db is None: return {}
     try:
         doc_ref = db.collection("user_profiles").document(user_key)
@@ -30,16 +32,21 @@ def load_profiles_from_db(db, user_key):
         if doc.exists:
             return doc.to_dict().get("profiles", {})
         else:
+            # If user document doesn't exist, create it
             doc_ref.set({"profiles": {}})
             return {}
-    except Exception:
+    except Exception as e:
+        st.error(f"שגיאה בטעינת פרופילים: {e}")
         return {}
 
 def save_profile_to_db(db, user_key, profile_name, profile_data):
+    """Saves or updates a single profile in Firestore."""
     if db is None: return False
     try:
+        # Convert numpy types to native Python types before saving
         native_profile_data = {k: (float(v) if isinstance(v, (np.floating, float)) else int(v) if isinstance(v, (np.integer, int)) else v) for k, v in profile_data.items()}
         doc_ref = db.collection("user_profiles").document(user_key)
+        # Use dot notation to update a specific field within the 'profiles' map
         doc_ref.update({f"profiles.{profile_name}": native_profile_data})
         return True
     except Exception as e:
@@ -47,9 +54,11 @@ def save_profile_to_db(db, user_key, profile_name, profile_data):
         return False
 
 def delete_profile_from_db(db, user_key, profile_name):
+    """Deletes a single profile from Firestore."""
     if db is None: return False
     try:
         doc_ref = db.collection("user_profiles").document(user_key)
+        # Use FieldValue.delete() to remove a field from the map
         doc_ref.update({f"profiles.{profile_name}": firestore.DELETE_FIELD})
         return True
     except Exception as e:
@@ -59,21 +68,22 @@ def delete_profile_from_db(db, user_key, profile_name):
 # --- Built-in Profiles ---
 BUILT_IN_PROFILES = {
     "ברירת מחדל (שמרני)": {
-        "min_stock_price": 20.0, "max_stock_price": 70.0, "max_pe_ratio": 40.0,
+        "min_stock_price": 20.0, "max_stock_price": 70.0, "max_pe_ratio": 40,
         "min_avg_daily_volume": 2000000, "min_iv_threshold": 0.30,
         "min_dte": 30, "max_dte": 60, "target_delta_directional": 0.30,
         "target_delta_neutral": 0.15, "spread_width": 5.0
     },
      "טווח רחב (למציאת יותר מניות)": {
-        "min_stock_price": 10.0, "max_stock_price": 500.0, "max_pe_ratio": 60.0,
+        "min_stock_price": 10.0, "max_stock_price": 500.0, "max_pe_ratio": 60,
         "min_avg_daily_volume": 1000000, "min_iv_threshold": 0.20,
         "min_dte": 20, "max_dte": 90, "target_delta_directional": 0.35,
         "target_delta_neutral": 0.20, "spread_width": 10.0
     },
 }
 
-# --- Login Function (Stable Version) ---
+# --- Login Function ---
 def check_access_key():
+    """Displays a login screen and validates the user's access key."""
     if st.session_state.get("key_correct", False):
         return True
 
@@ -86,7 +96,7 @@ def check_access_key():
         if user_key_input in valid_keys:
             st.session_state.key_correct = True
             st.session_state.user_key = user_key_input
-            st.rerun() # Use the modern, stable rerun command
+            st.rerun()
         else:
             st.error("😕 מפתח הגישה שגוי.")
     return False
@@ -95,6 +105,7 @@ def check_access_key():
 RISK_FREE_RATE = 0.05
 @st.cache_data
 def black_scholes(S, K, T, r, sigma, option_type):
+    """Calculates the Black-Scholes delta for an option."""
     if T <= 0 or sigma <= 0: return 0.0
     try:
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -104,8 +115,9 @@ def black_scholes(S, K, T, r, sigma, option_type):
     except (ValueError, ZeroDivisionError): return 0.0
     return delta
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400) # Cache for one day
 def get_tickers_from_wikipedia(index_choice):
+    """Scrapes the latest list of tickers from Wikipedia for S&P 500 and/or NASDAQ 100."""
     tickers = set()
     urls = {"S&P 500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "NASDAQ 100": "https://en.wikipedia.org/wiki/Nasdaq-100"}
     indices_to_fetch = ["S&P 500", "NASDAQ 100"] if index_choice == "שניהם" else [index_choice]
@@ -125,8 +137,9 @@ def get_tickers_from_wikipedia(index_choice):
         except Exception: pass
     return sorted(list(tickers))
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) # Cache for one hour
 def get_stock_data(ticker_symbol):
+    """Fetches key financial data for a given stock ticker."""
     try:
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
@@ -142,8 +155,9 @@ def get_stock_data(ticker_symbol):
         return {'ticker': ticker_symbol, 'current_price': current_price, 'pe_ratio': pe_ratio, 'avg_volume': avg_volume, 'sma50': sma50, 'options_expirations': ticker.options}
     except Exception: return None
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) # Cache for one hour
 def get_option_chain(ticker_symbol, expiration_date):
+    """Fetches the option chain for a given ticker and expiration date."""
     try:
         ticker = yf.Ticker(ticker_symbol)
         opt = ticker.option_chain(expiration_date)
@@ -152,6 +166,7 @@ def get_option_chain(ticker_symbol, expiration_date):
     except Exception: return pd.DataFrame(), pd.DataFrame()
 
 def screen_stock(stock_data, criteria):
+    """Checks if a stock meets the basic screening criteria."""
     if not stock_data: return False
     price, pe, volume = stock_data['current_price'], stock_data['pe_ratio'], stock_data['avg_volume']
     if price is None or volume is None: return False
@@ -161,6 +176,7 @@ def screen_stock(stock_data, criteria):
     return True
 
 def find_best_option_strike(options_df, current_price, option_type, target_delta, criteria):
+    """Finds the best option strike based on DTE, liquidity, IV, and target delta."""
     best_strike_data, min_delta_diff = None, float('inf')
     today = datetime.now().date()
     for _, row in options_df.iterrows():
@@ -181,6 +197,7 @@ def find_best_option_strike(options_df, current_price, option_type, target_delta
     return best_strike_data
 
 def calculate_trade_metrics(credit, spread_width, pop):
+    """Calculates Expected Value (EV) and Return on Risk (RoR)."""
     if credit <= 0: return -float('inf'), -float('inf')
     max_profit = credit * 100
     max_loss = (spread_width - credit) * 100
@@ -200,36 +217,54 @@ def run_app():
 
     st.title("שולחן העבודה של מנהל התיק - אוטונומי")
     st.sidebar.header("הגדרות סריקה וסינון")
-    
-    # --- Profile Management UI (Rewritten for Stability) ---
+
+    # --- NEW: Robust Profile Management Logic ---
     custom_profiles = load_profiles_from_db(db, user_key)
     all_profiles = {**BUILT_IN_PROFILES, **custom_profiles}
     profile_names = list(all_profiles.keys())
     
-    if "selected_profile_name" not in st.session_state or st.session_state.selected_profile_name not in profile_names:
-        st.session_state.selected_profile_name = profile_names[0]
+    # Define the callback function that updates the session state for all criteria
+    def on_profile_change():
+        profile_name = st.session_state.profile_selector
+        profile_data = all_profiles.get(profile_name)
+        if profile_data:
+            for key, value in profile_data.items():
+                widget_key = f"criteria_{key}"
+                # Ensure data types match the widget's expectation
+                if "price" in key or "width" in key or "delta" in key or "iv" in key:
+                    st.session_state[widget_key] = float(value)
+                else: # volume, pe_ratio, dte
+                    st.session_state[widget_key] = int(value)
 
-    try:
-        current_index = profile_names.index(st.session_state.selected_profile_name)
-    except ValueError:
-        current_index = 0
-        st.session_state.selected_profile_name = profile_names[current_index]
+    # One-time initialization of criteria widgets state on first run
+    if 'criteria_initialized' not in st.session_state:
+        default_profile_data = all_profiles[profile_names[0]]
+        for key, value in default_profile_data.items():
+            widget_key = f"criteria_{key}"
+            if "price" in key or "width" in key or "delta" in key or "iv" in key:
+                st.session_state[widget_key] = float(value)
+            else:
+                st.session_state[widget_key] = int(value)
+        st.session_state['criteria_initialized'] = True
+        # Set the initial selected profile in the selector's state
+        st.session_state.profile_selector = profile_names[0]
 
-    selected_profile_name = st.sidebar.selectbox(
+
+    # The selectbox now uses the on_change callback to trigger state updates
+    st.sidebar.selectbox(
         "בחר פרופיל סינון:",
         options=profile_names,
-        index=current_index,
-        key="profile_selector"
+        key="profile_selector", # This key holds the name of the selected profile
+        on_change=on_profile_change
     )
-    # This is the key to stability: only update the session state if the user actually changed the selection
-    if selected_profile_name != st.session_state.selected_profile_name:
-        st.session_state.selected_profile_name = selected_profile_name
-        st.rerun() # A safe rerun to load the new profile's values into the widgets
-
-    selected_profile = all_profiles[selected_profile_name]
-
+    
+    # --- Create sidebar widgets. They automatically read their values from session_state via their keys ---
     st.sidebar.subheader("קריטריונים מותאמים אישית")
     current_criteria = {}
+    
+    # We define the widgets based on a template (the default profile keys)
+    # The actual values are controlled by st.session_state
+    template_keys = BUILT_IN_PROFILES["ברירת מחדל (שמרני)"].keys()
     param_labels = {
         "min_stock_price": "מחיר מניה מינימלי", "max_stock_price": "מחיר מניה מקסימלי",
         "max_pe_ratio": "יחס P/E מקסימלי", "min_avg_daily_volume": "ווליום יומי ממוצע מינימלי",
@@ -237,17 +272,21 @@ def run_app():
         "target_delta_directional": "דלתא יעד כיוונית", "target_delta_neutral": "דלתא יעד ניטרלית",
         "spread_width": "רוחב המרווח"
     }
-    for key, value in selected_profile.items():
-        label = f"{param_labels.get(key, key.replace('_', ' ').title())}"
-        if "price" in key or "width" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label} ($):", min_value=0.0, value=float(value), step=0.5, key=f"criteria_{key}")
-        elif "volume" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=0, value=int(value), step=100_000, format="%d", key=f"criteria_{key}")
-        elif "pe_ratio" in key or "dte" in key:
-            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=1, value=int(value), step=1, key=f"criteria_{key}")
-        elif "delta" in key or "iv" in key:
-            current_criteria[key] = st.sidebar.slider(f"{label}:", 0.0, 1.5 if "iv" in key else 0.5, float(value), 0.01, "%.2f", key=f"criteria_{key}")
 
+    for key in template_keys:
+        label = f"{param_labels.get(key, key.replace('_', ' ').title())}"
+        widget_key = f"criteria_{key}"
+        
+        if "price" in key or "width" in key:
+            current_criteria[key] = st.sidebar.number_input(f"{label} ($):", min_value=0.0, step=0.5, key=widget_key)
+        elif "volume" in key:
+            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=0, step=100_000, format="%d", key=widget_key)
+        elif "pe_ratio" in key or "dte" in key:
+            current_criteria[key] = st.sidebar.number_input(f"{label}:", min_value=1, step=1, key=widget_key)
+        elif "delta" in key or "iv" in key:
+            current_criteria[key] = st.sidebar.slider(f"{label}:", 0.0, 1.5 if "iv" in key else 0.5, 0.01, "%.2f", key=widget_key)
+
+    # --- Profile Save/Delete UI (remains mostly the same) ---
     st.sidebar.subheader("ניהול פרופילים")
     new_profile_name = st.sidebar.text_input("שם פרופיל לשמירה/עדכון:", key="new_profile_name_input")
     
@@ -256,33 +295,34 @@ def run_app():
         if st.button("💾 שמור"):
             if new_profile_name:
                 if save_profile_to_db(db, user_key, new_profile_name, current_criteria):
-                    st.session_state.selected_profile_name = new_profile_name
                     st.sidebar.success(f"'{new_profile_name}' נשמר!")
-                    st.rerun() # Rerun to update the profile list immediately
+                    # Update selector to the new profile and rerun
+                    st.session_state.profile_selector = new_profile_name
+                    st.rerun() 
             else:
                 st.sidebar.warning("יש לתת שם לפרופיל.")
 
     deletable_profiles = list(custom_profiles.keys())
     if deletable_profiles:
         with col2:
-            # Use the currently selected profile in the dropdown as the one to delete
-            profile_to_delete = selected_profile_name
             if st.button("🗑️ מחק"):
+                profile_to_delete = st.session_state.profile_selector
                 if profile_to_delete in BUILT_IN_PROFILES:
                     st.sidebar.warning("לא ניתן למחוק פרופיל מובנה.")
                 elif delete_profile_from_db(db, user_key, profile_to_delete):
                     st.sidebar.success(f"'{profile_to_delete}' נמחק!")
-                    st.session_state.selected_profile_name = "ברירת מחדל (שמרני)"
-                    st.rerun() # Rerun to refresh the list and selection
+                    # Reset selector to default and rerun
+                    st.session_state.profile_selector = "ברירת מחדל (שמרני)"
+                    st.rerun() 
     
-    # --- Main Page Content ---
+    # --- Main Page Content (No changes needed here) ---
     index_to_scan = st.selectbox("בחר אינדקס לסריקה:", options=["S&P 500", "NASDAQ 100", "שניהם"], index=2)
     INVESTMENT_UNIVERSE = get_tickers_from_wikipedia(index_to_scan)
     if not INVESTMENT_UNIVERSE:
         st.warning("גירוד המניות נכשל. משתמש ברשימת דוגמה.")
         INVESTMENT_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "SPY", "QQQ"]
     selected_tickers = st.multiselect("בחר מניות לסריקה:", options=INVESTMENT_UNIVERSE, default=INVESTMENT_UNIVERSE)
-    st.info("""**הערות חשובות:** הנתונים אינם בזמן אמת. הכלי אינו בודק דוחות רווחים.""")
+    st.info("""**הערות חשובות:** הנתונים אינם בזמן אמת. הכלי אינו בודק דוחות רווחים קרובים.""")
 
     if st.button("🚀 נתח ומצא עסקאות"):
         if not selected_tickers:
@@ -311,6 +351,7 @@ def run_app():
                     calls_df, puts_df = get_option_chain(ticker_symbol, expiration_date)
                     if puts_df.empty or calls_df.empty: continue
                     
+                    # Bull Put Spread Logic
                     if sma50 and current_price > sma50:
                         sold_put = find_best_option_strike(puts_df, current_price, 'put', current_criteria["target_delta_directional"], current_criteria)
                         if sold_put:
@@ -324,6 +365,7 @@ def run_app():
                                     ev, ror = calculate_trade_metrics(credit, spread_width, pop)
                                     if ev > 0: all_suitable_deals.append({'מניה': ticker_symbol, 'אסטרטגיה': 'Bull Put', 'מחיר מניה': f"${current_price:.2f}", 'SMA50': f"${sma50:.2f}", 'ת. פקיעה': expiration_date, 'DTE': dte, 'סטרייקים': f"${bought_strike:.2f} / ${sold_put['strike']:.2f}", 'דלתא (נמכר)': f"{sold_put['delta']:.2f}", 'IV (נמכר)': f"{sold_put['impliedVolatility']:.2%}", 'פרמיה': f"${credit:.2f}", 'תוחלת רווח (EV)': f"${ev:.2f}", 'תשואה על סיכון (ROR)': f"{ror:.1f}%" if ror != float('inf') else '∞', 'הסתברות לרווח (POP)': f"{pop:.1%}"})
                     
+                    # Bear Call Spread Logic
                     if sma50 and current_price < sma50:
                         sold_call = find_best_option_strike(calls_df, current_price, 'call', current_criteria["target_delta_directional"], current_criteria)
                         if sold_call:
@@ -341,6 +383,7 @@ def run_app():
             status_text.empty()
             if all_suitable_deals:
                 deals_df = pd.DataFrame(all_suitable_deals)
+                # Scoring Logic
                 deals_df['EV_numeric'] = pd.to_numeric(deals_df['תוחלת רווח (EV)'].str.replace('$', ''), errors='coerce').fillna(0)
                 deals_df['ROR_numeric'] = pd.to_numeric(deals_df['תשואה על סיכון (ROR)'].str.replace('%', '').replace('∞', 'inf'), errors='coerce').fillna(0)
                 deals_df['POP_numeric'] = pd.to_numeric(deals_df['הסתברות לרווח (POP)'].str.replace('%', ''), errors='coerce').fillna(0)
@@ -365,3 +408,4 @@ except FileNotFoundError: pass
 
 if check_access_key():
     run_app()
+
