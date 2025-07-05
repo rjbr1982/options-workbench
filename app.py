@@ -435,4 +435,57 @@ if st.button("נתח ומצא את העסקאות הטובות ביותר"):
                                     'סטרייק פוט (נמכר)': f"${best_put_neutral['strike']:.2f}",
                                     'IV גלום פוט': f"{best_put_neutral['implied_volatility']:.2%}",
                                     'דלתא קול (נמכר)': f"{best_call_neutral['delta']:.2f}",
-                                    'סטרייק קול (נמכר)': f"${best_
+                                    'סטרייק קול (נמכר)': f"${best_call_neutral['strike']:.2f}",
+                                    'IV גלום קול': f"{best_call_neutral['implied_volatility']:.2%}",
+                                    'פרמיה כוללת (מוערך)': f"${total_credit:.2f}",
+                                    'תוחלת רווח (EV)': f"${ev_ic:.2f}",
+                                    'תשואה על סיכון (ROR)': f"{ror_ic:.1f}%" if ror_ic != float('inf') else '∞',
+                                    'הסתברות לרווח (POP)': f"{pop_ic:.1%}",
+                                    'הוראת GTC (קנה חזרה)': f"${(total_credit / 2):.2f}",
+                                    'תאריך יעד לניהול': (exp_dt - timedelta(days=21)).strftime('%Y-%m-%d')
+                                })
+                                suitable_options_found = True
+                
+            if not suitable_options_found and is_suitable_stock:
+                st.write(f"**{ticker_symbol}:** 🤷 לא נמצאו עסקאות אופציות מתאימות לפי הקריטריונים.")
+            elif not stock_data['options_expirations'] and is_suitable_stock:
+                st.write(f"**{ticker_symbol}:** 🤷 לא נמצאו תאריכי פקיעה לאופציות.")
+
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if all_suitable_deals:
+            deals_df = pd.DataFrame(all_suitable_deals)
+            
+            # חישוב ציון לדירוג
+            deals_df['EV_numeric'] = deals_df['תוחלת רווח (EV)'].str.replace('$', '').astype(float)
+            deals_df['ROR_numeric'] = deals_df['תשואה על סיכון (ROR)'].str.replace('%', '').replace('∞', np.inf).astype(float)
+            deals_df['POP_numeric'] = deals_df['הסתברות לרווח (POP)'].str.replace('%', '').astype(float)
+
+            max_ev = deals_df['EV_numeric'].max()
+            max_ror = deals_df['ROR_numeric'].max()
+            max_pop = deals_df['POP_numeric'].max()
+
+            # וודא שהמכנה אינו אפס כדי למנוע שגיאות
+            norm_ev = deals_df['EV_numeric'] / max_ev if max_ev > 0 else 0
+            norm_ror = deals_df['ROR_numeric'] / max_ror if max_ror > 0 else 0
+            norm_pop = deals_df['POP_numeric'] / max_pop if max_pop > 0 else 0
+
+            deals_df['ציון'] = (
+                (norm_ev * 0.45) +
+                (norm_pop * 0.45) +
+                (norm_ror * 0.10)
+            )
+            
+            deals_df = deals_df.sort_values(by='ציון', ascending=False)
+            
+            # הסתרת עמודות העזר המספריות
+            deals_df = deals_df.drop(columns=['EV_numeric', 'ROR_numeric', 'POP_numeric'])
+
+            st.dataframe(deals_df, use_container_width=True)
+            st.success("הניתוח הושלם! העסקאות המומלצות ביותר מוצגות בטבלה.")
+        else:
+            st.warning("לא נמצאו עסקאות אופציות מתאימות העומדות בכל הקריטריונים שהוגדרו.")
+
+
